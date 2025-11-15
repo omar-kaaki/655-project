@@ -1,0 +1,22 @@
+[Unit]
+Description=Network Intrusion Detection System (LSTM Autoencoder)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/user/655-project
+ExecStart=/usr/bin/python3 /home/user/655-project/network_monitor.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/network-monitor.log
+StandardError=append:/var/log/network-monitor-error.log
+
+# Security settings
+PrivateTmp=false
+NoNewPrivileges=false
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

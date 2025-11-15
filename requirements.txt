@@ -1,0 +1,17 @@
+# Network Intrusion Detection System - Dependencies
+
+# Deep Learning Framework
+tensorflow==2.19.0
+
+# Machine Learning
+scikit-learn==1.5.2
+numpy>=1.23.0
+
+# Network Traffic Capture
+scapy>=2.5.0
+
+# Data Processing
+pandas>=2.0.0
+
+# System utilities
+psutil>=5.9.0
