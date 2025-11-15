@@ -14,6 +14,11 @@ echo "Starting Network Intrusion Detection System..."
 echo "Press Ctrl+C to stop"
 echo ""
 
-# Run the monitor
+# Run the monitor with 10-second flow timeout for faster testing
+# (unless user provides their own arguments)
 cd "$(dirname "$0")"
-./venv/bin/python3 network_monitor.py "$@"
+if [ $# -eq 0 ]; then
+    ./venv/bin/python3 network_monitor.py --flow-timeout 10
+else
+    ./venv/bin/python3 network_monitor.py "$@"
+fi

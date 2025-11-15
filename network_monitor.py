@@ -38,6 +38,7 @@ class FlowTracker:
     """Track network flows and extract features"""
 
     def __init__(self, timeout=120):
+        self.timeout = timeout
         self.flows = defaultdict(lambda: {
             'packets': [],
             'start_time': None,
@@ -49,7 +50,6 @@ class FlowTracker:
             'bwd_flags': {'FIN': 0, 'SYN': 0, 'RST': 0, 'PSH': 0, 'ACK': 0, 'URG': 0},
             'idle_times': []
         })
-        self.timeout = timeout
         self.completed_flows = deque(maxlen=1000)
 
     def get_flow_key(self, packet):
@@ -172,6 +172,26 @@ class FlowTracker:
         self.completed_flows.append(features)
         return features
 
+    def check_timeouts(self, current_time):
+        """Check for and complete timed-out flows"""
+        timed_out_flows = []
+        for flow_key, flow in list(self.flows.items()):
+            if flow['last_time'] is None:
+                continue
+            flow_duration = current_time - flow['start_time']
+            idle_time = current_time - flow['last_time']
+            # Complete if flow has been idle for timeout period and has enough packets
+            if idle_time > self.timeout and len(flow['packets']) >= 5:
+                timed_out_flows.append(flow_key)
+
+        # Complete all timed-out flows
+        completed = []
+        for flow_key in timed_out_flows:
+            features = self.complete_flow(flow_key)
+            completed.append(features)
+
+        return completed
+
     def extract_features(self, flow, flow_key):
         """Extract the 30 required features from a flow"""
         features = {}
@@ -279,9 +299,10 @@ class FlowTracker:
 class NetworkMonitor:
     """Main network monitoring and anomaly detection system"""
 
-    def __init__(self, model_dir='.', interface=None, alert_threshold=None):
+    def __init__(self, model_dir='.', interface=None, alert_threshold=None, flow_timeout=30):
         self.model_dir = model_dir
         self.interface = interface
+        self.flow_timeout = flow_timeout
 
         # Load metadata
         metadata_path = os.path.join(model_dir, 'metadata.json')
@@ -311,7 +332,7 @@ class NetworkMonitor:
         self.selector = self._load_pickle_safe(selector_path, 'selector')
 
         # Initialize flow tracker
-        self.flow_tracker = FlowTracker()
+        self.flow_tracker = FlowTracker(timeout=self.flow_timeout)
 
         # Statistics
         self.stats = {
@@ -326,6 +347,7 @@ class NetworkMonitor:
         self.flow_window = deque(maxlen=self.window_size)
 
         logger.info(f"Network Monitor initialized with threshold: {self.threshold}")
+        logger.info(f"Flow timeout: {self.flow_timeout} seconds")
         logger.info(f"Monitoring interface: {interface if interface else 'all interfaces'}")
 
     def _load_pickle_safe(self, file_path, obj_name):
@@ -450,7 +472,22 @@ class NetworkMonitor:
             if flow_features:
                 self.process_flow(flow_features)
 
-            # Print stats every 1000 packets
+            # Check for timed-out flows every 50 packets
+            if self.stats['total_packets'] % 50 == 0:
+                timed_out = self.flow_tracker.check_timeouts(timestamp)
+                for flow_features in timed_out:
+                    self.process_flow(flow_features)
+
+            # Print stats every 100 packets (more frequent feedback)
+            if self.stats['total_packets'] % 100 == 0:
+                active_flows = len(self.flow_tracker.flows)
+                logger.info(
+                    f"Activity - Packets: {self.stats['total_packets']} | "
+                    f"Active Flows: {active_flows} | "
+                    f"Completed Flows: {self.stats['total_flows']}"
+                )
+
+            # Print detailed stats every 1000 packets
             if self.stats['total_packets'] % 1000 == 0:
                 self.print_stats()
 
@@ -514,6 +551,9 @@ Examples:
 
   # Monitor specific interface with custom threshold
   sudo python3 network_monitor.py -i wlan0 -t 1.2
+
+  # Quick testing with 10-second flow timeout
+  sudo python3 network_monitor.py --flow-timeout 10
         """
     )
 
@@ -528,6 +568,13 @@ Examples:
         type=float,
         help=f'Anomaly detection threshold (default: from metadata.json)',
         default=None
+    )
+
+    parser.add_argument(
+        '--flow-timeout',
+        type=int,
+        help='Flow timeout in seconds (default: 30). Lower values complete flows faster for testing.',
+        default=30
     )
 
     parser.add_argument(
@@ -547,7 +594,8 @@ Examples:
     monitor = NetworkMonitor(
         model_dir=args.model_dir,
         interface=args.interface,
-        alert_threshold=args.threshold
+        alert_threshold=args.threshold,
+        flow_timeout=args.flow_timeout
     )
 
     monitor.start()
