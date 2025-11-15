@@ -4,8 +4,13 @@ Real-time Network Intrusion Detection System
 Uses LSTM Autoencoder to detect anomalous network traffic
 """
 
+# Set environment variables FIRST before any imports
 import os
 import sys
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['PYTHONWARNINGS'] = 'ignore'
+
 import json
 import pickle
 import logging
@@ -13,21 +18,34 @@ import argparse
 from datetime import datetime
 from collections import defaultdict, deque
 
-# Suppress ALL warnings before importing libraries
+# Suppress ALL warnings
 import warnings
 warnings.filterwarnings('ignore')
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-
-# Suppress TensorFlow logging
-import logging as tf_logging
-tf_logging.getLogger('tensorflow').setLevel(tf_logging.ERROR)
 
 from scapy.all import sniff, IP, TCP, UDP
 import numpy as np
+
+# Suppress TensorFlow stderr output
+import sys
+stderr = sys.stderr
+sys.stderr = open(os.devnull, 'w')
 import tensorflow as tf
 from tensorflow import keras
+sys.stderr = stderr
+
 import joblib  # Alternative to pickle for sklearn objects
+
+# ANSI color codes for terminal output
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    MAGENTA = '\033[95m'
+    CYAN = '\033[96m'
+    WHITE = '\033[97m'
+    BOLD = '\033[1m'
+    RESET = '\033[0m'
 
 # Configure logging
 logging.basicConfig(
@@ -210,6 +228,7 @@ class FlowTracker:
         features['src_port'] = src_port
         features['dst_port'] = dst_port
         features['protocol'] = protocol
+        features['packets'] = flow['packets']  # Store for detailed logging
 
         # Destination Port
         features['Destination Port'] = dst_port
@@ -436,15 +455,23 @@ class NetworkMonitor:
         # Add to sliding window
         self.flow_window.append(features_scaled[0])
 
+        # Get protocol name
+        protocol_name = "TCP" if flow_features['protocol'] == 6 else "UDP" if flow_features['protocol'] == 17 else "OTHER"
+
         # Log flow completion
         flows_needed = self.window_size - len(self.flow_window)
         if flows_needed > 0:
-            logger.info(
-                f"Flow completed: {flow_features['src_ip']}:{flow_features['src_port']} -> "
+            print(
+                f"{Colors.CYAN}[FLOW COMPLETE]{Colors.RESET} "
+                f"{Colors.BLUE}{protocol_name}{Colors.RESET} "
+                f"{flow_features['src_ip']}:{flow_features['src_port']} "
+                f"{Colors.YELLOW}→{Colors.RESET} "
                 f"{flow_features['dst_ip']}:{flow_features['dst_port']} | "
-                f"Collected {len(self.flow_window)}/{self.window_size} flows "
-                f"({flows_needed} more needed for anomaly detection)"
+                f"Packets: {len(flow_features.get('packets', []))} | "
+                f"Progress: {Colors.BOLD}{len(self.flow_window)}/{self.window_size}{Colors.RESET} flows "
+                f"({Colors.YELLOW}{flows_needed} more needed{Colors.RESET})"
             )
+            sys.stdout.flush()
 
         # Only predict when we have enough flows for a sequence
         if len(self.flow_window) == self.window_size:
@@ -454,25 +481,36 @@ class NetworkMonitor:
             # Predict
             result = self.predict_anomaly(sequence)
 
-            # Log result
+            # Log result with detailed information
             if result['is_attack']:
                 self.stats['attack_flows'] += 1
-                logger.warning(
-                    f"⚠️  ATTACK DETECTED! "
-                    f"Flow: {flow_features['src_ip']}:{flow_features['src_port']} -> "
-                    f"{flow_features['dst_ip']}:{flow_features['dst_port']} | "
-                    f"Error: {result['reconstruction_error']:.4f} | "
-                    f"Threshold: {result['threshold']:.4f} | "
-                    f"Confidence: {result['confidence']:.2%}"
+                print(
+                    f"\n{Colors.RED}{Colors.BOLD}{'='*80}{Colors.RESET}\n"
+                    f"{Colors.RED}{Colors.BOLD}⚠️  ATTACK DETECTED!{Colors.RESET}\n"
+                    f"{Colors.RED}{'='*80}{Colors.RESET}\n"
+                    f"{Colors.BOLD}Source:{Colors.RESET}      {flow_features['src_ip']}:{flow_features['src_port']}\n"
+                    f"{Colors.BOLD}Destination:{Colors.RESET} {flow_features['dst_ip']}:{flow_features['dst_port']}\n"
+                    f"{Colors.BOLD}Protocol:{Colors.RESET}    {protocol_name}\n"
+                    f"{Colors.BOLD}Packets:{Colors.RESET}     {len(flow_features.get('packets', []))}\n"
+                    f"{Colors.BOLD}Duration:{Colors.RESET}    {flow_features['Flow Duration']/1_000_000:.2f}s\n"
+                    f"{Colors.RED}{Colors.BOLD}Error:{Colors.RESET}       {result['reconstruction_error']:.4f} "
+                    f"(Threshold: {result['threshold']:.4f})\n"
+                    f"{Colors.RED}{Colors.BOLD}Confidence:{Colors.RESET}  {result['confidence']:.1%} above threshold\n"
+                    f"{Colors.RED}{'='*80}{Colors.RESET}\n"
                 )
+                sys.stdout.flush()
             else:
                 self.stats['benign_flows'] += 1
-                logger.info(
-                    f"✓ Benign traffic - "
-                    f"{flow_features['src_ip']}:{flow_features['src_port']} -> "
+                print(
+                    f"{Colors.GREEN}✓ [BENIGN]{Colors.RESET} "
+                    f"{Colors.BLUE}{protocol_name}{Colors.RESET} "
+                    f"{flow_features['src_ip']}:{flow_features['src_port']} "
+                    f"{Colors.YELLOW}→{Colors.RESET} "
                     f"{flow_features['dst_ip']}:{flow_features['dst_port']} | "
-                    f"Error: {result['reconstruction_error']:.4f}"
+                    f"Packets: {len(flow_features.get('packets', []))} | "
+                    f"Error: {Colors.GREEN}{result['reconstruction_error']:.4f}{Colors.RESET}"
                 )
+                sys.stdout.flush()
 
     def packet_handler(self, packet):
         """Handle each captured packet"""
