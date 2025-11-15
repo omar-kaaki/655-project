@@ -298,13 +298,15 @@ class NetworkMonitor:
         # Load scaler
         scaler_path = os.path.join(model_dir, 'scaler.pkl')
         with open(scaler_path, 'rb') as f:
-            self.scaler = pickle.load(f)
+            # Use encoding='latin1' for compatibility with different Python versions
+            self.scaler = pickle.load(f, encoding='latin1')
         logger.info(f"Scaler loaded from {scaler_path}")
 
         # Load feature selector
         selector_path = os.path.join(model_dir, 'selector.pkl')
         with open(selector_path, 'rb') as f:
-            self.selector = pickle.load(f)
+            # Use encoding='latin1' for compatibility with different Python versions
+            self.selector = pickle.load(f, encoding='latin1')
         logger.info(f"Feature selector loaded from {selector_path}")
 
         # Initialize flow tracker
