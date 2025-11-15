@@ -70,9 +70,9 @@ class FlowTracker:
             'last_time': None,
             'fwd_packets': [],
             'bwd_packets': [],
-            'flags': {'FIN': 0, 'SYN': 0, 'RST': 0, 'PSH': 0, 'ACK': 0, 'URG': 0},
-            'fwd_flags': {'FIN': 0, 'SYN': 0, 'RST': 0, 'PSH': 0, 'ACK': 0, 'URG': 0},
-            'bwd_flags': {'FIN': 0, 'SYN': 0, 'RST': 0, 'PSH': 0, 'ACK': 0, 'URG': 0},
+            'flags': {'FIN': 0, 'SYN': 0, 'RST': 0, 'PSH': 0, 'ACK': 0, 'URG': 0, 'CWR': 0, 'ECE': 0},
+            'fwd_flags': {'FIN': 0, 'SYN': 0, 'RST': 0, 'PSH': 0, 'ACK': 0, 'URG': 0, 'CWR': 0, 'ECE': 0},
+            'bwd_flags': {'FIN': 0, 'SYN': 0, 'RST': 0, 'PSH': 0, 'ACK': 0, 'URG': 0, 'CWR': 0, 'ECE': 0},
             'idle_times': []
         })
         self.completed_flows = deque(maxlen=1000)
@@ -180,6 +180,18 @@ class FlowTracker:
                     flow['fwd_flags']['URG'] += 1
                 else:
                     flow['bwd_flags']['URG'] += 1
+            if tcp_flags.C:  # CWR flag
+                flow['flags']['CWR'] += 1
+                if direction == 'fwd':
+                    flow['fwd_flags']['CWR'] += 1
+                else:
+                    flow['bwd_flags']['CWR'] += 1
+            if tcp_flags.E:  # ECE flag
+                flow['flags']['ECE'] += 1
+                if direction == 'fwd':
+                    flow['fwd_flags']['ECE'] += 1
+                else:
+                    flow['bwd_flags']['ECE'] += 1
 
         # Check if flow should be completed (has FIN or RST, or timeout)
         flow_duration = timestamp - flow['start_time']
@@ -223,7 +235,7 @@ class FlowTracker:
         return completed
 
     def extract_features(self, flow, flow_key):
-        """Extract the 30 required features from a flow"""
+        """Extract all 78 CICFlowMeter features from a flow"""
         features = {}
 
         # Basic flow info
@@ -235,28 +247,57 @@ class FlowTracker:
         features['protocol'] = protocol
         features['packets'] = flow['packets']  # Store for detailed logging
 
-        # Destination Port
-        features['Destination Port'] = dst_port
-
-        # Flow Duration (in microseconds)
-        if flow['start_time'] and flow['last_time']:
-            features['Flow Duration'] = int((flow['last_time'] - flow['start_time']) * 1_000_000)
-        else:
-            features['Flow Duration'] = 0
-
         # Packet lengths
         all_lengths = [p['length'] for p in flow['packets']]
         fwd_lengths = [p['length'] for p in flow['fwd_packets']]
         bwd_lengths = [p['length'] for p in flow['bwd_packets']]
 
-        # Forward packet length stats
-        features['Fwd Packet Length Min'] = min(fwd_lengths) if fwd_lengths else 0
+        # Calculate byte totals
+        total_fwd_bytes = sum(fwd_lengths) if fwd_lengths else 0
+        total_bwd_bytes = sum(bwd_lengths) if bwd_lengths else 0
+        total_bytes = sum(all_lengths)
 
-        # Backward packet length stats
-        features['Bwd Packet Length Max'] = max(bwd_lengths) if bwd_lengths else 0
+        # Calculate packet counts
+        total_fwd_packets = len(fwd_lengths)
+        total_bwd_packets = len(bwd_lengths)
+        total_packets = len(all_lengths)
+
+        # Flow Duration (in microseconds)
+        if flow['start_time'] and flow['last_time']:
+            flow_duration_us = (flow['last_time'] - flow['start_time']) * 1_000_000
+            flow_duration_s = flow['last_time'] - flow['start_time']
+        else:
+            flow_duration_us = 0
+            flow_duration_s = 0.000001  # Avoid division by zero
+
+        features['Flow Duration'] = int(flow_duration_us)
+
+        # 1. Source Port
+        features['Source Port'] = src_port
+        # 2. Destination Port
+        features['Destination Port'] = dst_port
+        # 3-4. Total packets
+        features['Total Fwd Packet'] = total_fwd_packets
+        features['Total Bwd packets'] = total_bwd_packets
+        # 5-6. Total length
+        features['Total Length of Fwd Packet'] = total_fwd_bytes
+        features['Total Length of Bwd Packet'] = total_bwd_bytes
+
+        # 7-10. Forward packet length stats
+        features['Fwd Packet Length Min'] = min(fwd_lengths) if fwd_lengths else 0
+        features['Fwd Packet Length Max'] = max(fwd_lengths) if fwd_lengths else 0
+        features['Fwd Packet Length Mean'] = np.mean(fwd_lengths) if fwd_lengths else 0
+        features['Fwd Packet Length Std'] = np.std(fwd_lengths) if fwd_lengths else 0
+
+        # 11-14. Backward packet length stats
         features['Bwd Packet Length Min'] = min(bwd_lengths) if bwd_lengths else 0
+        features['Bwd Packet Length Max'] = max(bwd_lengths) if bwd_lengths else 0
         features['Bwd Packet Length Mean'] = np.mean(bwd_lengths) if bwd_lengths else 0
         features['Bwd Packet Length Std'] = np.std(bwd_lengths) if bwd_lengths else 0
+
+        # 15-16. Flow rates
+        features['Flow Bytes/s'] = total_bytes / flow_duration_s if flow_duration_s > 0 else 0
+        features['Flow Packets/s'] = total_packets / flow_duration_s if flow_duration_s > 0 else 0
 
         # Inter-arrival times (IAT)
         flow_iats = []
@@ -265,7 +306,7 @@ class FlowTracker:
 
         # Calculate flow IATs
         for i in range(1, len(flow['packets'])):
-            iat = (flow['packets'][i]['time'] - flow['packets'][i-1]['time']) * 1_000_000  # microseconds
+            iat = (flow['packets'][i]['time'] - flow['packets'][i-1]['time']) * 1_000_000
             flow_iats.append(iat)
 
         # Calculate forward IATs
@@ -278,51 +319,105 @@ class FlowTracker:
             iat = (flow['bwd_packets'][i]['time'] - flow['bwd_packets'][i-1]['time']) * 1_000_000
             bwd_iats.append(iat)
 
-        # Flow IAT stats
+        # 17-20. Flow IAT stats
         features['Flow IAT Mean'] = np.mean(flow_iats) if flow_iats else 0
         features['Flow IAT Std'] = np.std(flow_iats) if flow_iats else 0
         features['Flow IAT Max'] = max(flow_iats) if flow_iats else 0
+        features['Flow IAT Min'] = min(flow_iats) if flow_iats else 0
 
-        # Forward IAT stats
-        features['Fwd IAT Total'] = sum(fwd_iats) if fwd_iats else 0
+        # 21-25. Forward IAT stats
+        features['Fwd IAT Min'] = min(fwd_iats) if fwd_iats else 0
+        features['Fwd IAT Max'] = max(fwd_iats) if fwd_iats else 0
         features['Fwd IAT Mean'] = np.mean(fwd_iats) if fwd_iats else 0
         features['Fwd IAT Std'] = np.std(fwd_iats) if fwd_iats else 0
-        features['Fwd IAT Max'] = max(fwd_iats) if fwd_iats else 0
+        features['Fwd IAT Total'] = sum(fwd_iats) if fwd_iats else 0
 
-        # Backward IAT stats
-        features['Bwd IAT Std'] = np.std(bwd_iats) if bwd_iats else 0
+        # 26-30. Backward IAT stats
+        features['Bwd IAT Min'] = min(bwd_iats) if bwd_iats else 0
         features['Bwd IAT Max'] = max(bwd_iats) if bwd_iats else 0
+        features['Bwd IAT Mean'] = np.mean(bwd_iats) if bwd_iats else 0
+        features['Bwd IAT Std'] = np.std(bwd_iats) if bwd_iats else 0
+        features['Bwd IAT Total'] = sum(bwd_iats) if bwd_iats else 0
 
-        # Min/Max/Mean packet lengths
+        # 31-34. PSH and URG flags (forward/backward)
+        features['Fwd PSH Flags'] = flow['fwd_flags'].get('PSH', 0)
+        features['Bwd PSH Flags'] = flow['bwd_flags'].get('PSH', 0)
+        features['Fwd URG Flags'] = flow['fwd_flags'].get('URG', 0)
+        features['Bwd URG Flags'] = flow['bwd_flags'].get('URG', 0)
+
+        # 35-36. Header lengths (estimate: TCP=20, UDP=8)
+        header_len = 20 if protocol == 6 else 8
+        features['Fwd Header Length'] = total_fwd_packets * header_len
+        features['Bwd Header Length'] = total_bwd_packets * header_len
+
+        # 37-38. Packets per second
+        features['Fwd Packets/s'] = total_fwd_packets / flow_duration_s if flow_duration_s > 0 else 0
+        features['Bwd Packets/s'] = total_bwd_packets / flow_duration_s if flow_duration_s > 0 else 0
+
+        # 39-43. Min/Max/Mean packet lengths
         features['Min Packet Length'] = min(all_lengths) if all_lengths else 0
         features['Max Packet Length'] = max(all_lengths) if all_lengths else 0
         features['Packet Length Mean'] = np.mean(all_lengths) if all_lengths else 0
         features['Packet Length Std'] = np.std(all_lengths) if all_lengths else 0
         features['Packet Length Variance'] = np.var(all_lengths) if all_lengths else 0
 
-        # TCP Flags
-        features['FIN Flag Count'] = flow['flags']['FIN']
-        features['ACK Flag Count'] = flow['flags']['ACK']
-        features['URG Flag Count'] = flow['flags']['URG']
+        # 44-51. TCP Flags (all types)
+        features['FIN Flag Count'] = flow['flags'].get('FIN', 0)
+        features['SYN Flag Count'] = flow['flags'].get('SYN', 0)
+        features['RST Flag Count'] = flow['flags'].get('RST', 0)
+        features['PSH Flag Count'] = flow['flags'].get('PSH', 0)
+        features['ACK Flag Count'] = flow['flags'].get('ACK', 0)
+        features['URG Flag Count'] = flow['flags'].get('URG', 0)
+        features['CWR Flag Count'] = flow['flags'].get('CWR', 0)
+        features['ECE Flag Count'] = flow['flags'].get('ECE', 0)
 
-        # Down/Up Ratio
-        total_fwd_bytes = sum(fwd_lengths) if fwd_lengths else 0
-        total_bwd_bytes = sum(bwd_lengths) if bwd_lengths else 0
+        # 52-54. Packet size averages
         features['Down/Up Ratio'] = total_bwd_bytes / total_fwd_bytes if total_fwd_bytes > 0 else 0
-
-        # Average packet size
-        total_bytes = sum(all_lengths)
-        total_packets = len(all_lengths)
         features['Average Packet Size'] = total_bytes / total_packets if total_packets > 0 else 0
+        features['Fwd Segment Size Avg'] = np.mean(fwd_lengths) if fwd_lengths else 0
+        features['Bwd Segment Size Avg'] = np.mean(bwd_lengths) if bwd_lengths else 0
 
-        # Average backward segment size
-        features['Avg Bwd Segment Size'] = np.mean(bwd_lengths) if bwd_lengths else 0
+        # 55-60. Bulk transfer metrics (simplified - we don't track bulk transfers)
+        features['Fwd Bytes/Bulk Avg'] = 0
+        features['Fwd Packet/Bulk Avg'] = 0
+        features['Fwd Bulk Rate Avg'] = 0
+        features['Bwd Bytes/Bulk Avg'] = 0
+        features['Bwd Packet/Bulk Avg'] = 0
+        features['Bwd Bulk Rate Avg'] = 0
 
-        # Idle time stats
-        idle_times = [t * 1_000_000 for t in flow['idle_times']]  # Convert to microseconds
+        # 61-64. Subflow metrics (we treat whole flow as one subflow)
+        features['Subflow Fwd Packets'] = total_fwd_packets
+        features['Subflow Fwd Bytes'] = total_fwd_bytes
+        features['Subflow Bwd Packets'] = total_bwd_packets
+        features['Subflow Bwd Bytes'] = total_bwd_bytes
+
+        # 65-66. Initial window bytes (simplified - use first packet)
+        features['Fwd Init Win Bytes'] = fwd_lengths[0] if fwd_lengths else 0
+        features['Bwd Init Win Bytes'] = bwd_lengths[0] if bwd_lengths else 0
+
+        # 67. Forward active data packets (packets with payload)
+        features['Fwd Act Data Pkts'] = total_fwd_packets
+        # 68. Forward segment size min
+        features['Fwd Seg Size Min'] = min(fwd_lengths) if fwd_lengths else 0
+
+        # 69-72. Active time stats (using inter-packet times for activity)
+        active_times = [iat for iat in flow_iats if iat < 1000000]  # < 1 second = active
+        features['Active Min'] = min(active_times) if active_times else 0
+        features['Active Mean'] = np.mean(active_times) if active_times else 0
+        features['Active Max'] = max(active_times) if active_times else 0
+        features['Active Std'] = np.std(active_times) if active_times else 0
+
+        # 73-76. Idle time stats
+        idle_times = [t * 1_000_000 for t in flow['idle_times']]
+        if not idle_times:  # Use long IATs as idle times
+            idle_times = [iat for iat in flow_iats if iat >= 1000000]
+        features['Idle Min'] = min(idle_times) if idle_times else 0
         features['Idle Mean'] = np.mean(idle_times) if idle_times else 0
         features['Idle Max'] = max(idle_times) if idle_times else 0
-        features['Idle Min'] = min(idle_times) if idle_times else 0
+        features['Idle Std'] = np.std(idle_times) if idle_times else 0
+
+        # 77-78. Protocol and Label (we add protocol as numeric)
+        features['Protocol'] = protocol
 
         return features
 
@@ -343,7 +438,17 @@ class NetworkMonitor:
         # Set threshold
         self.threshold = alert_threshold if alert_threshold else self.metadata['threshold']
         self.window_size = self.metadata['window_size']
-        self.feature_order = self.metadata['feature_order']
+
+        # Load comprehensive CICFlowMeter feature order (78 features)
+        cicflowmeter_features_path = os.path.join(model_dir, 'cicflowmeter_features.txt')
+        if os.path.exists(cicflowmeter_features_path):
+            with open(cicflowmeter_features_path, 'r') as f:
+                self.feature_order = [line.strip() for line in f if line.strip()]
+            logger.info(f"Loaded {len(self.feature_order)} CICFlowMeter features")
+        else:
+            # Fallback to metadata (legacy)
+            self.feature_order = self.metadata['feature_order']
+            logger.warning(f"cicflowmeter_features.txt not found, using {len(self.feature_order)} features from metadata")
 
         # Load model
         logger.info("Loading LSTM autoencoder model...")
