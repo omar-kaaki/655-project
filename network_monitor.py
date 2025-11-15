@@ -291,7 +291,8 @@ class NetworkMonitor:
         # Load model
         logger.info("Loading LSTM autoencoder model...")
         model_path = os.path.join(model_dir, self.metadata['model_file'])
-        self.model = keras.models.load_model(model_path)
+        # Load without compilation since we only need inference (not training)
+        self.model = keras.models.load_model(model_path, compile=False)
         logger.info(f"Model loaded from {model_path}")
 
         # Load scaler
