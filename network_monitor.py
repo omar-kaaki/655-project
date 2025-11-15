@@ -183,9 +183,13 @@ class FlowTracker:
 
         # Check if flow should be completed (has FIN or RST, or timeout)
         flow_duration = timestamp - flow['start_time']
-        if (flow['flags']['FIN'] >= 2 or flow['flags']['RST'] > 0) and len(flow['packets']) >= 5:
+        min_packets = 3  # Reduced from 5 to allow more flows to complete
+
+        # Complete on TCP termination flags
+        if (flow['flags']['FIN'] >= 2 or flow['flags']['RST'] > 0) and len(flow['packets']) >= min_packets:
             return self.complete_flow(flow_key)
-        elif flow_duration > self.timeout and len(flow['packets']) >= 5:
+        # Complete on timeout
+        elif flow_duration > self.timeout and len(flow['packets']) >= min_packets:
             return self.complete_flow(flow_key)
 
         return None
@@ -200,13 +204,14 @@ class FlowTracker:
     def check_timeouts(self, current_time):
         """Check for and complete timed-out flows"""
         timed_out_flows = []
+        min_packets = 3  # Minimum packets needed for a flow
         for flow_key, flow in list(self.flows.items()):
             if flow['last_time'] is None:
                 continue
             flow_duration = current_time - flow['start_time']
             idle_time = current_time - flow['last_time']
             # Complete if flow has been idle for timeout period and has enough packets
-            if idle_time > self.timeout and len(flow['packets']) >= 5:
+            if idle_time > self.timeout and len(flow['packets']) >= min_packets:
                 timed_out_flows.append(flow_key)
 
         # Complete all timed-out flows
@@ -527,8 +532,8 @@ class NetworkMonitor:
             if flow_features:
                 self.process_flow(flow_features)
 
-            # Check for timed-out flows every 50 packets
-            if self.stats['total_packets'] % 50 == 0:
+            # Check for timed-out flows every 10 packets (more frequent)
+            if self.stats['total_packets'] % 10 == 0:
                 timed_out = self.flow_tracker.check_timeouts(timestamp)
                 for flow_features in timed_out:
                     self.process_flow(flow_features)
