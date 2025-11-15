@@ -16,6 +16,7 @@ from scapy.all import sniff, IP, TCP, UDP
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+import joblib  # Alternative to pickle for sklearn objects
 
 # Configure logging
 logging.basicConfig(
@@ -295,19 +296,15 @@ class NetworkMonitor:
         self.model = keras.models.load_model(model_path, compile=False)
         logger.info(f"Model loaded from {model_path}")
 
-        # Load scaler
+        # Load scaler with multiple fallback methods
         scaler_path = os.path.join(model_dir, 'scaler.pkl')
-        with open(scaler_path, 'rb') as f:
-            # Use encoding='latin1' for compatibility with different Python versions
-            self.scaler = pickle.load(f, encoding='latin1')
-        logger.info(f"Scaler loaded from {scaler_path}")
+        logger.info(f"Loading scaler from {scaler_path}")
+        self.scaler = self._load_pickle_safe(scaler_path, 'scaler')
 
-        # Load feature selector
+        # Load feature selector with multiple fallback methods
         selector_path = os.path.join(model_dir, 'selector.pkl')
-        with open(selector_path, 'rb') as f:
-            # Use encoding='latin1' for compatibility with different Python versions
-            self.selector = pickle.load(f, encoding='latin1')
-        logger.info(f"Feature selector loaded from {selector_path}")
+        logger.info(f"Loading feature selector from {selector_path}")
+        self.selector = self._load_pickle_safe(selector_path, 'selector')
 
         # Initialize flow tracker
         self.flow_tracker = FlowTracker()
@@ -326,6 +323,44 @@ class NetworkMonitor:
 
         logger.info(f"Network Monitor initialized with threshold: {self.threshold}")
         logger.info(f"Monitoring interface: {interface if interface else 'all interfaces'}")
+
+    def _load_pickle_safe(self, file_path, obj_name):
+        """Safely load pickle files with multiple fallback methods"""
+        # Method 1: Try joblib (best for sklearn objects)
+        try:
+            obj = joblib.load(file_path)
+            logger.info(f"{obj_name} loaded successfully using joblib")
+            return obj
+        except Exception as e:
+            logger.debug(f"joblib loading failed: {e}")
+
+        # Method 2: Try pickle with latin1 encoding
+        try:
+            with open(file_path, 'rb') as f:
+                obj = pickle.load(f, encoding='latin1')
+            logger.info(f"{obj_name} loaded successfully using pickle with latin1")
+            return obj
+        except Exception as e:
+            logger.debug(f"pickle with latin1 failed: {e}")
+
+        # Method 3: Try pickle with bytes encoding
+        try:
+            with open(file_path, 'rb') as f:
+                obj = pickle.load(f, encoding='bytes')
+            logger.info(f"{obj_name} loaded successfully using pickle with bytes")
+            return obj
+        except Exception as e:
+            logger.debug(f"pickle with bytes failed: {e}")
+
+        # Method 4: Try standard pickle
+        try:
+            with open(file_path, 'rb') as f:
+                obj = pickle.load(f)
+            logger.info(f"{obj_name} loaded successfully using standard pickle")
+            return obj
+        except Exception as e:
+            logger.error(f"All loading methods failed for {obj_name}: {e}")
+            raise RuntimeError(f"Could not load {obj_name} from {file_path}")
 
     def features_to_array(self, features):
         """Convert feature dictionary to ordered numpy array"""
