@@ -454,8 +454,16 @@ class NetworkMonitor:
         # Convert to feature array
         features_array = self.features_to_array(flow_features)
 
-        # Scale features
-        features_scaled = self.scaler.transform(features_array.reshape(1, -1))
+        # Check for NaN or inf values
+        if np.any(np.isnan(features_array)) or np.any(np.isinf(features_array)):
+            logger.warning(f"NaN or inf values detected in features, replacing with 0")
+            features_array = np.nan_to_num(features_array, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Apply feature selector (critical step that was missing!)
+        features_selected = self.selector.transform(features_array.reshape(1, -1))
+
+        # Scale selected features
+        features_scaled = self.scaler.transform(features_selected)
 
         # Add to sliding window
         self.flow_window.append(features_scaled[0])
