@@ -12,15 +12,22 @@ import logging
 import argparse
 from datetime import datetime
 from collections import defaultdict, deque
+
+# Suppress ALL warnings before importing libraries
+import warnings
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+# Suppress TensorFlow logging
+import logging as tf_logging
+tf_logging.getLogger('tensorflow').setLevel(tf_logging.ERROR)
+
 from scapy.all import sniff, IP, TCP, UDP
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 import joblib  # Alternative to pickle for sklearn objects
-import warnings
-
-# Suppress sklearn feature name warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 # Configure logging
 logging.basicConfig(
@@ -428,6 +435,16 @@ class NetworkMonitor:
 
         # Add to sliding window
         self.flow_window.append(features_scaled[0])
+
+        # Log flow completion
+        flows_needed = self.window_size - len(self.flow_window)
+        if flows_needed > 0:
+            logger.info(
+                f"Flow completed: {flow_features['src_ip']}:{flow_features['src_port']} -> "
+                f"{flow_features['dst_ip']}:{flow_features['dst_port']} | "
+                f"Collected {len(self.flow_window)}/{self.window_size} flows "
+                f"({flows_needed} more needed for anomaly detection)"
+            )
 
         # Only predict when we have enough flows for a sequence
         if len(self.flow_window) == self.window_size:
