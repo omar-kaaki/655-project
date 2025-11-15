@@ -17,6 +17,10 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 import joblib  # Alternative to pickle for sklearn objects
+import warnings
+
+# Suppress sklearn feature name warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 # Configure logging
 logging.basicConfig(
