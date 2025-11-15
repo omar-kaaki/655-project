@@ -27,10 +27,11 @@ This project implements an advanced network intrusion detection system that:
 
 - **Model Type**: LSTM Autoencoder
 - **Framework**: TensorFlow 2.19.0 / scikit-learn 1.5.2
-- **Features**: 30 network flow features
-- **Window Size**: 5 flows
+- **Training Dataset**: CIC-IDS2017 (Canadian Institute for Cybersecurity)
+- **Features**: 30 network flow features (from CICFlowMeter)
+- **Window Size**: 5 flows (sliding window)
 - **Anomaly Threshold**: 1.436 (95th percentile of benign reconstruction errors)
-- **Training**: Trained on Monday benign flows, validated on Wednesday mixed flows
+- **Training**: Trained on CIC-IDS2017 benign traffic patterns (Monday), validated on mixed flows (Wednesday)
 
 ### Network Flow Features (30)
 
@@ -335,13 +336,138 @@ ping -c 10 8.8.8.8  # In another terminal
 cat network_monitor.log
 ```
 
+## Testing with CIC-IDS2017 Traffic Patterns
+
+The model was trained on the **CIC-IDS2017 dataset** from the Canadian Institute for Cybersecurity. To properly test the NIDS, you should generate traffic that matches the dataset patterns.
+
+### Important: Model Training Context
+
+This NIDS model was specifically trained on CIC-IDS2017 dataset traffic patterns:
+- **Benign traffic**: Enterprise network patterns (HTTP/HTTPS to major sites, external DNS queries, file transfers)
+- **Attack traffic**: Port scans, brute force attacks, DoS/DDoS, web attacks, botnet behavior
+
+**Local network patterns** (DNS to local resolver, SSDP/mDNS multicast) may trigger false positives because they weren't present in the training data.
+
+### Benign Traffic Generator
+
+Generate benign traffic matching CIC-IDS2017 patterns:
+
+```bash
+# Terminal 1: Start the monitor
+sudo ./run_monitor.sh
+
+# Terminal 2: Generate CIC-IDS2017 benign traffic
+./generate_cicids_benign.sh
+```
+
+This script simulates:
+- HTTP/HTTPS web browsing to popular sites (Google, Facebook, YouTube, Amazon, etc.)
+- DNS queries to external public DNS (8.8.8.8)
+- File downloads (simulating normal user behavior)
+- Mixed web activity
+
+**Expected Result**: Traffic should be classified as BENIGN (green output)
+
+### Attack Traffic Generator
+
+Generate attack traffic matching CIC-IDS2017 attack types:
+
+```bash
+# Terminal 1: Start the monitor
+sudo ./run_monitor.sh
+
+# Terminal 2: Simulate CIC-IDS2017 attack patterns
+./generate_cicids_attacks.sh [target_ip]
+# Default target is 127.0.0.1 (localhost)
+```
+
+This script simulates the following attack types from CIC-IDS2017:
+
+**Tuesday - Brute Force Attacks:**
+- SSH Brute Force (rapid SSH login attempts)
+- FTP Brute Force (FTP login attempts)
+
+**Wednesday - DoS Attacks:**
+- SYN Flood (using hping3 if available)
+- HTTP Flood (Hulk/GoldenEye style)
+
+**Thursday - Web Attacks:**
+- SQL Injection attempts
+- XSS (Cross-Site Scripting) attempts
+
+**Friday - Advanced Attacks:**
+- Port Scans (multiple techniques)
+- DDoS simulation (distributed attack patterns)
+- Botnet behavior (C2 beaconing, DNS tunneling)
+- Service enumeration (aggressive version detection)
+
+**Expected Result**: Attack traffic should be classified as ATTACK (red output)
+
+### Combined Testing
+
+For realistic testing, run both generators simultaneously:
+
+```bash
+# Terminal 1: Monitor
+sudo ./run_monitor.sh
+
+# Terminal 2: Benign traffic (continuous)
+./generate_cicids_benign.sh
+
+# Terminal 3: Attack traffic (periodic)
+./generate_cicids_attacks.sh
+```
+
+This creates a mixed traffic environment similar to the CIC-IDS2017 dataset, allowing you to observe:
+- True Positives: Attacks correctly identified as ATTACK
+- True Negatives: Benign traffic correctly identified as BENIGN
+- Detection rate and accuracy
+
+### Understanding Detection Results
+
+**Flow Analysis Window:**
+- The model requires **5 completed flows** before it can make predictions
+- Each flow needs at least **3 packets** and either FIN/RST flags or timeout (default 10 seconds)
+- Flows are analyzed in sliding windows of 5 consecutive flows
+
+**Threshold Adjustment:**
+- Default threshold: **1.436** (optimized for CIC-IDS2017)
+- If you see false positives with CIC-IDS2017 benign traffic: `./run_monitor.sh --threshold 1.8`
+- If you want more sensitive detection: `./run_monitor.sh --threshold 1.2`
+
+**Why Local Traffic May Be Flagged:**
+If you see your normal network traffic flagged as attacks, it's because:
+1. DNS queries to local resolver (192.168.x.x) instead of public DNS
+2. mDNS/SSDP multicast traffic (not in CIC-IDS2017)
+3. Local service discovery protocols
+4. Private network scanning patterns
+
+Use the CIC-IDS2017 traffic generators for accurate testing!
+
+### Other Traffic Generators (For Reference)
+
+Legacy traffic generators (may produce false positives):
+
+```bash
+# Generic continuous traffic (may be flagged as suspicious)
+./continuous_traffic.sh
+
+# Generic test traffic
+./generate_test_traffic.sh
+
+# Mixed attack simulation
+./simulate_attacks.sh
+```
+
+These scripts generate generic traffic that may not match CIC-IDS2017 patterns and could result in false positives or false negatives.
+
 ## Performance Considerations
 
 - **CPU Usage**: The LSTM model inference requires moderate CPU. On modern systems, expect 10-30% CPU usage.
 - **Memory Usage**: Approximately 500MB-1GB RAM (model + flow tracking)
 - **Packet Loss**: At very high traffic rates (>10,000 pps), some packets may be dropped. Consider:
   - Monitoring specific high-priority interfaces only
-  - Adjusting flow timeout (default: 120 seconds)
+  - Adjusting flow timeout (default: 10 seconds, configurable with --flow-timeout)
   - Running on dedicated hardware
 
 ## Security Notes
@@ -364,7 +490,13 @@ cat network_monitor.log
 ├── requirements.txt             # Python dependencies
 ├── setup.sh                     # Installation script
 ├── install_service.sh           # Service installation script
+├── run_monitor.sh               # Clean startup script (no warnings)
 ├── network-monitor.service      # systemd service template
+├── generate_cicids_benign.sh    # CIC-IDS2017 benign traffic generator
+├── generate_cicids_attacks.sh   # CIC-IDS2017 attack traffic generator
+├── continuous_traffic.sh        # Legacy continuous traffic generator
+├── generate_test_traffic.sh     # Legacy test traffic generator
+├── simulate_attacks.sh          # Legacy attack simulation
 ├── network_monitor.log          # Application log (created at runtime)
 └── README.md                    # This file
 ```
