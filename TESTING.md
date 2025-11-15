@@ -24,10 +24,22 @@ sudo ./venv/bin/python3 network_monitor.py
 The system detects **completed flows**, not individual packets. A flow completes when:
 - **TCP FIN flags** are exchanged (normal connection close)
 - **TCP RST flag** is sent (connection reset)
-- **Timeout** occurs (default: 120 seconds of inactivity)
+- **Timeout** occurs (default: **10 seconds** when using `./run_monitor.sh`, **30 seconds** otherwise)
 - **Minimum 5 packets** in the flow
 
 **Important:** You need **5 completed flows** before the system starts detecting anomalies (sliding window requirement).
+
+**New in this version:** Flows now complete quickly! When you run `./run_monitor.sh`, flows timeout after just 10 seconds, so you'll see results within 15-20 seconds of generating traffic.
+
+### Activity Monitoring
+
+Every 100 packets, you'll see activity updates like:
+```
+INFO - Activity - Packets: 100 | Active Flows: 3 | Completed Flows: 0
+INFO - Activity - Packets: 200 | Active Flows: 5 | Completed Flows: 2
+```
+
+This shows the system is working even before flows complete!
 
 ---
 
