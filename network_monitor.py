@@ -272,11 +272,9 @@ class FlowTracker:
 
         features['Flow Duration'] = int(flow_duration_us)
 
-        # 1. Source Port
-        features['Source Port'] = src_port
-        # 2. Destination Port
+        # 1. Destination Port
         features['Destination Port'] = dst_port
-        # 3-4. Total packets
+        # 2-3. Total packets
         features['Total Fwd Packet'] = total_fwd_packets
         features['Total Bwd packets'] = total_bwd_packets
         # 5-6. Total length
